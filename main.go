@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -13,6 +13,10 @@ import (
 	"sync"
 	"time"
 )
+
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
 
 func main() {
 
@@ -130,31 +134,41 @@ func getWaybackURLs(domain string, noSubs bool) ([]wurl, error) {
 		subsWildcard = ""
 	}
 
-	res, err := http.Get(
-		fmt.Sprintf("http://web.archive.org/cdx/search/cdx?url=%s%s/*&output=json&collapse=urlkey", subsWildcard, domain),
-	)
+	params := url.Values{}
+	params.Set("url", subsWildcard+domain+"/*")
+	params.Set("output", "json")
+	params.Set("collapse", "urlkey")
+
+	res, err := httpClient.Get("https://web.archive.org/cdx/search/cdx?" + params.Encode())
 	if err != nil {
 		return []wurl{}, err
 	}
+	defer res.Body.Close()
 
-	raw, err := ioutil.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK {
+		return []wurl{}, fmt.Errorf("unexpected status code: %d", res.StatusCode)
+	}
 
-	res.Body.Close()
+	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		return []wurl{}, err
 	}
 
 	var wrapper [][]string
 	err = json.Unmarshal(raw, &wrapper)
+	if err != nil {
+		return []wurl{}, err
+	}
 
 	out := make([]wurl, 0, len(wrapper))
 
 	skip := true
 	for _, urls := range wrapper {
-		// The first item is always just the string "original",
-		// so we should skip the first item
 		if skip {
 			skip = false
+			continue
+		}
+		if len(urls) < 3 {
 			continue
 		}
 		out = append(out, wurl{date: urls[1], url: urls[2]})
@@ -170,14 +184,20 @@ func getCommonCrawlURLs(domain string, noSubs bool) ([]wurl, error) {
 		subsWildcard = ""
 	}
 
-	res, err := http.Get(
-		fmt.Sprintf("http://index.commoncrawl.org/CC-MAIN-2018-22-index?url=%s%s/*&output=json", subsWildcard, domain),
-	)
+	params := url.Values{}
+	params.Set("url", subsWildcard+domain+"/*")
+	params.Set("output", "json")
+
+	res, err := httpClient.Get("https://index.commoncrawl.org/CC-MAIN-2026-25-index?" + params.Encode())
 	if err != nil {
 		return []wurl{}, err
 	}
-
 	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return []wurl{}, fmt.Errorf("unexpected status code: %d", res.StatusCode)
+	}
+
 	sc := bufio.NewScanner(res.Body)
 
 	out := make([]wurl, 0)
@@ -197,6 +217,10 @@ func getCommonCrawlURLs(domain string, noSubs bool) ([]wurl, error) {
 		out = append(out, wurl{date: wrapper.Timestamp, url: wrapper.URL})
 	}
 
+	if err := sc.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to scan Common Crawl response: %s\n", err)
+	}
+
 	return out, nil
 
 }
@@ -206,37 +230,44 @@ func getVirusTotalURLs(domain string, noSubs bool) ([]wurl, error) {
 
 	apiKey := os.Getenv("VT_API_KEY")
 	if apiKey == "" {
-		// no API key isn't an error,
-		// just don't fetch
 		return out, nil
 	}
 
-	fetchURL := fmt.Sprintf(
-		"https://www.virustotal.com/vtapi/v2/domain/report?apikey=%s&domain=%s",
-		apiKey,
-		domain,
+	req, err := http.NewRequest("GET",
+		fmt.Sprintf("https://www.virustotal.com/api/v3/domains/%s/urls?limit=40", url.PathEscape(domain)),
+		nil,
 	)
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("x-apikey", apiKey)
 
-	resp, err := http.Get(fetchURL)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return out, err
 	}
 	defer resp.Body.Close()
 
-	wrapper := struct {
-		URLs []struct {
-			URL string `json:"url"`
-			// TODO: handle VT date format (2018-03-26 09:22:43)
-			//Date string `json:"scan_date"`
-		} `json:"detected_urls"`
-	}{}
+	if resp.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var wrapper struct {
+		Data []struct {
+			Attributes struct {
+				URL string `json:"url"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
 
 	dec := json.NewDecoder(resp.Body)
-
 	err = dec.Decode(&wrapper)
+	if err != nil {
+		return out, err
+	}
 
-	for _, u := range wrapper.URLs {
-		out = append(out, wurl{url: u.URL})
+	for _, u := range wrapper.Data {
+		out = append(out, wurl{url: u.Attributes.URL})
 	}
 
 	return out, nil
@@ -257,19 +288,23 @@ func isSubdomain(rawUrl, domain string) bool {
 func getVersions(u string) ([]string, error) {
 	out := make([]string, 0)
 
-	resp, err := http.Get(fmt.Sprintf(
-		"http://web.archive.org/cdx/search/cdx?url=%s&output=json", u,
-	))
+	params := url.Values{}
+	params.Set("url", u)
+	params.Set("output", "json")
 
+	resp, err := httpClient.Get("https://web.archive.org/cdx/search/cdx?" + params.Encode())
 	if err != nil {
 		return out, err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
 	r := [][]string{}
 
 	dec := json.NewDecoder(resp.Body)
-
 	err = dec.Decode(&r)
 	if err != nil {
 		return out, err
@@ -278,14 +313,13 @@ func getVersions(u string) ([]string, error) {
 	first := true
 	seen := make(map[string]bool)
 	for _, s := range r {
-
-		// skip the first element, it's the field names
 		if first {
 			first = false
 			continue
 		}
-
-		// fields: "urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"
+		if len(s) < 6 {
+			continue
+		}
 		if seen[s[5]] {
 			continue
 		}
