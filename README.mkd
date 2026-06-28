@@ -49,4 +49,4 @@ https://web.archive.org/web/20260605215222if_/https://example.com/
 
 ## Credit
 
-This tool was inspired by @mhmdiaa's [waybackurls.py](https://gist.github.com/mhmdiaa/adf6bff70142e5091792841d4b372050) script.
+This tool is a fork of [tomnomnom/waybackurls](https://github.com/tomnomnom/waybackurls) and was inspired by @mhmdiaa's [waybackurls.py](https://gist.github.com/mhmdiaa/adf6bff70142e5091792841d4b372050) script.
