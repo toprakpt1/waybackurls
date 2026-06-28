@@ -5,7 +5,7 @@ Fetch known URLs from the Wayback Machine, Common Crawl, and VirusTotal for a do
 ## Install
 
 ```
-go install github.com/toprakpt1/waybackurls@latest
+GOPROXY=direct go install github.com/toprakpt1/waybackurls@latest
 ```
 
 ## Usage
