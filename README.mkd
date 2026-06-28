@@ -1,20 +1,52 @@
 # waybackurls
 
-Accept line-delimited domains on stdin, fetch known URLs from the Wayback Machine for `*.domain` and output them on stdout.
+Fetch known URLs from the Wayback Machine, Common Crawl, and VirusTotal for a domain.
 
-Usage example:
+## Install
+
+```
+go install github.com/toprakpt1/waybackurls@latest
+```
+
+## Usage
 
 ```
 ▶ cat domains.txt | waybackurls > urls
+▶ waybackurls example.com > urls
 ```
 
-Install:
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-dates` | Show date of fetch in the first column (RFC3339 format) |
+| `-no-subs` | Don't include subdomains of the target domain |
+| `-get-versions` | List archived versions for a specific URL |
+
+### Data Sources
+
+- **Wayback Machine** — CDX API (`web.archive.org`)
+- **Common Crawl** — latest index (`index.commoncrawl.org`)
+- **VirusTotal** — v3 API (requires `VT_API_KEY` env var)
+
+### Examples
 
 ```
-▶ go install github.com/tomnomnom/waybackurls@latest
+▶ echo "example.com" | waybackurls -dates | head -5
+2026-06-05T21:49:40Z https://example.com/
+2026-06-05T21:52:22Z https://www.example.com/
+2026-06-06T16:21:29Z http://example.com/
+2026-06-06T16:21:29Z http://www.example.com/
+
+▶ echo "example.com" | waybackurls -no-subs
+https://example.com/
+http://example.com/
+
+▶ waybackurls -get-versions https://example.com/ 2>/dev/null | head -3
+https://web.archive.org/web/20260605214940if_/https://example.com/
+https://web.archive.org/web/20260605215222if_/https://example.com/
 ```
 
 ## Credit
 
 This tool was inspired by @mhmdiaa's [waybackurls.py](https://gist.github.com/mhmdiaa/adf6bff70142e5091792841d4b372050) script.
-Thanks to them for the great idea!
